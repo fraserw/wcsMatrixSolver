@@ -21,7 +21,7 @@ You also need SExtractor available on the command line. This can often be instal
 1b. Installation
 ----------------
 
-For now, just clone the repo, and make the destination available in your PYTHONPATH and PATH environment variables. Eventually this will probable go to pypi.
+For now, just clone the repo, and make the destination available in your PYTHONPATH and PATH environment variables. Eventually this will probable go to pypi. 
 
 
 2. Usage
