@@ -1,0 +1,10 @@
+*fits
+OV*
+pyraf_ccmap.py
+wcsSolver.py*
+*txt
+*.cat
+*.sex
+def*
+coords*
+*pickle
