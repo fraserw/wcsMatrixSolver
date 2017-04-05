@@ -1,3 +1,5 @@
+#! /usr/bin/env pythonw
+
 import astropy.io.fits as fits
 from astropy import wcs as WCS
 import numpy as np
@@ -9,6 +11,7 @@ import pylab as pyl
 from astropy.visualization import interval
 import numdisplay
 from matplotlib.patches import Circle
+from matplotlib import gridspec
 
 
 #sextractor shape cut  -- done
@@ -175,25 +178,63 @@ class matrixWCSSolver(object):
             pyl.draw()
 
     def _resid4Panel(self):
-        fig = pyl.figure(' Fourpanel', figsize = (self.windowSize, self.windowSize))
+        fig = pyl.figure(' Fourpanel', figsize = (self.windowSize*2.0, self.windowSize))
+        self.gs = gridspec.GridSpec(2,3)
+        self.gs.update(wspace = 0.0, hspace = 0.0)
+        self._sp1 = pyl.subplot(self.gs[0,0],xticklabels = '')
+        self._sp2 = pyl.subplot(self.gs[0,1],xticklabels = '',yticklabels = '')
+        self._sp3 = pyl.subplot(self.gs[1,0])
+        self._sp4 = pyl.subplot(self.gs[1,1],yticklabels = '')
+
+        self.gs2 = gridspec.GridSpec(2,3)
+        self.gs2.update(hspace = 0.0)
+        self._sp5 = pyl.subplot(self.gs2[0,2])
+        self._sp6 = pyl.subplot(self.gs2[1,2])
+        """
         fig.subplots_adjust(hspace = 0, wspace = 0)
         self._sp1 = fig.add_subplot(221,xticklabels = '')
         self._sp2 = fig.add_subplot(222,xticklabels = '',yticklabels = '')
         self._sp3 = fig.add_subplot(223)
         self._sp4 = fig.add_subplot(224,yticklabels = '')
+        """
 
         self.dra = (self.RA - self.pra)*3600.0
         self.ddec = (self.DEC - self.pdec)*3600.0
 
-        self._sp1.scatter(self.X,self.dra)
-        self._sp3.scatter(self.X,self.ddec)
-        self._sp2.scatter(self.Y,self.dra)
-        self._sp4.scatter(self.Y,self.ddec)
+        self._sp1.scatter(self.X,self.dra, s = 40)
+        self._sp3.scatter(self.X,self.ddec, s = 40)
+        self._sp2.scatter(self.Y,self.dra, s = 40)
+        self._sp4.scatter(self.Y,self.ddec, s = 40)
+
+        self._sp5.plot(np.arange(len(self._killList[:,2])), np.abs(self._killList[:,4]), 'b-o', lw=2, label = 'RA')
+        self._sp5.plot(np.arange(len(self._killList[:,2])), np.abs(self._killList[:,5]), 'r-o', lw=2, label = 'Dec')
+        self._sp5.plot([len(self._lastKilled), len(self._lastKilled)], [0.0,np.nanmax(np.abs(self._killList[:,4]))], 'k--')
+        self._sp5.set_xlim(-0.05,len(self._killList[:,2])+1)
+        self._sp5.legend()
+
+        self.twin = self._sp5.twiny()
+        self.twin.set_xlim(len(self.goodMatches), len(self.goodMatches)-len(self._killList[:,2])-1)
+        self.twin.set_xlabel('Number Match Stars')
+        self.twin.plot([12,12], [self.twin.get_ylim()[0],self.twin.get_ylim()[1]], 'r:', lw=3)
+
+
+        self._sp6.plot(np.arange(len(self._killList[:,2])), np.abs(self._killList[:,2]), 'b-o', lw=2, label = 'RA')
+        self._sp6.plot(np.arange(len(self._killList[:,2])), np.abs(self._killList[:,3]), 'r-o', lw=2, label = 'Dec')
+        self._sp6.plot([len(self._lastKilled), len(self._lastKilled)], [0.0,np.nanmax(np.abs(self._killList[:,2]))], 'k--')
+        self._sp6.plot([-0.05,len(self._killList[:,2])+1],[3.0,3.0],'r-',lw=3)
+        self._sp6.set_xlim(-0.05,len(self._killList[:,2])+1)
+        self._sp6.legend()
+
 
         self._sp4.set_xlabel('Y')
         self._sp3.set_xlabel('X')
         self._sp3.set_ylabel('delta Dec (")')
         self._sp1.set_ylabel('delta RA (")')
+
+        self._sp5.set_ylabel('Killed Star Residual (")')
+        self._sp6.set_ylabel('Max delta/Sample deviation')
+        self._sp6.set_xlabel('Kill Number')
+
 
         w = np.where(self.goodMatches)
         self._sp1.set_title('{:.3f}"'.format(np.std(self.dra[w])))
@@ -242,35 +283,17 @@ class matrixWCSSolver(object):
             self._fullRedraw()
 
         elif event.key in ['k','K']:
-            w = np.where(self.goodMatches)
-            (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
-            std_ra = np.std(predRA[w] - self.RA[w])*3600.0
-            std_dec = np.std(predDEC[w] - self.DEC[w])*3600.0
-            delta = (std_ra**2 + std_dec**2)**0.5
+            toKill = self._whichToKill()[0]
 
-            k_deltas = []
-            for i in w[0]:
-                self.goodMatches[i] = 0
-
-                fake_w = np.where(self.goodMatches)
-                (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
-                k_std_ra = np.std(predRA[fake_w] - self.RA[fake_w])*3600.0
-                k_std_dec = np.std(predDEC[fake_w] - self.DEC[fake_w])*3600.0
-                k_delta = (k_std_ra**2 + k_std_dec**2)**0.5
-                k_deltas.append(k_delta)
-
-                self.goodMatches[i] = 1
-            k_deltas = np.array(k_deltas)
-            argmin = np.argmin(k_deltas)
-            self._lastKilled.append(w[0][argmin])
-            self.goodMatches[w[0][argmin]] = 0
+            self._lastKilled.append(toKill)
+            self.goodMatches[toKill] = 0
             self._fullRedraw()
 
         elif event.key in ['j','J'] and len(self._lastKilled) > 0:
             if self.goodMatches[self._lastKilled[-1]] == 0:
                 self.goodMatches[self._lastKilled[-1]] = 1
-                self._fullRedraw()
             self._lastKilled = self._lastKilled[:-1]
+            self._fullRedraw()
 
         elif event.key == '?':
             print 'HELP!!!'
@@ -281,6 +304,73 @@ class matrixWCSSolver(object):
             print " -press k to kill the most discrepant point"
             print " -press j to restore the most recent point you nuked with k"
             print " -press ? to see this message"
+
+    def _whichToKill(self):
+        #get original state
+        w = np.where(self.goodMatches)
+        (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+        std_ra = np.std(predRA[w] - self.RA[w])*3600.0
+        std_dec = np.std(predDEC[w] - self.DEC[w])*3600.0
+        delta = (std_ra**2 + std_dec**2)**0.5
+
+        #now determine which is the best to eliminate
+        k_deltas = []
+        individual_deltas = []
+        for i in w[0]:
+            self.goodMatches[i] = 0
+
+            fake_w = np.where(self.goodMatches)
+            (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+            k_std_ra = np.std(predRA[fake_w] - self.RA[fake_w])*3600.0
+            k_std_dec = np.std(predDEC[fake_w] - self.DEC[fake_w])*3600.0
+
+            k_delta = (k_std_ra**2 + k_std_dec**2)**0.5
+            k_deltas.append([k_delta,
+                             (np.max(np.abs(predRA[fake_w] - self.RA[fake_w]))*3600.0)/k_std_ra,
+                             (np.max(np.abs(predDEC[fake_w] - self.DEC[fake_w]))*3600.0)/k_std_dec])
+
+            self.goodMatches[i] = 1
+
+        k_deltas = np.array(k_deltas)
+        argmin = np.argmin(k_deltas[:,0])
+        kill = w[0][argmin]
+
+        #got which one to kill, now determine how bad that point is after killing it
+        self.goodMatches[kill] = 0
+        fake_w = np.where(self.goodMatches)
+        (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+        idra = (predRA[kill] - self.RA[kill])*3600.0
+        iddec = (predDEC[kill] - self.DEC[kill])*3600.0
+
+        return (kill, k_deltas[argmin][0], k_deltas[argmin][1], k_deltas[argmin][2], idra,iddec)
+        #self._lastKilled.append(w[0][argmin])
+        #self.goodMatches[w[0][argmin]] = 0
+
+
+    def _orderToKill(self):
+        """
+        This calls _whichToKill successively to generate an order of sources to kill
+        for subplot5
+        """
+        #assume we do this right from the start
+        self.goodMatches *= 0
+        self.goodMatches += 1
+
+        #get the max_delts for no kills
+        fake_w = np.where(self.goodMatches)
+        (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+        k_std_ra = np.std(predRA[fake_w] - self.RA[fake_w])*3600.0
+        k_std_dec = np.std(predDEC[fake_w] - self.DEC[fake_w])*3600.0
+        killList = [[-1, -32768.0, np.max(np.abs(predRA[fake_w] - self.RA[fake_w]))*3600.0/k_std_ra, np.max(np.abs(predDEC[fake_w] - self.DEC[fake_w]))*3600.0/k_std_dec , np.nan, np.nan]]
+        while np.sum(self.goodMatches) > 8:
+            (k, delta, max_delt_ra, max_delt_dec, idra, iddec) = self._whichToKill()
+            killList.append([k,delta, max_delt_ra, max_delt_dec, idra, iddec])
+            self.goodMatches[k] = 0
+        self._killList = np.array(killList)
+
+        self.goodMatches *= 0
+        self.goodMatches += 1
+
 
     def _fullRedraw(self):
         (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
@@ -304,6 +394,8 @@ class matrixWCSSolver(object):
         self._sp2.cla()
         self._sp3.cla()
         self._sp4.cla()
+        self._sp5.cla()
+        self._sp6.cla()
 
         colours = []
         for i in range(len(self.goodMatches)):
@@ -311,15 +403,38 @@ class matrixWCSSolver(object):
                 colours.append('b')
             else:
                 colours.append('r')
-        self._sp1.scatter(self.X,self.dra,c=colours)
-        self._sp2.scatter(self.Y,self.dra,c=colours)
-        self._sp3.scatter(self.X,self.ddec,c=colours)
-        self._sp4.scatter(self.Y,self.ddec,c=colours)
+        self._sp1.scatter(self.X,self.dra,c=colours, s = 40)
+        self._sp2.scatter(self.Y,self.dra,c=colours, s = 40)
+        self._sp3.scatter(self.X,self.ddec,c=colours, s = 40)
+        self._sp4.scatter(self.Y,self.ddec,c=colours, s = 40)
+
+        self._sp5.plot(np.arange(len(self._killList[:,2])), np.abs(self._killList[:,4]), 'b-o', lw=2, label = 'RA')
+        self._sp5.plot(np.arange(len(self._killList[:,2])), np.abs(self._killList[:,5]), 'r-o', lw=2, label = 'Dec')
+        self._sp5.plot([len(self._lastKilled), len(self._lastKilled)], [0.0,np.nanmax(np.abs(self._killList[:,4]))], 'k--')
+        self._sp5.set_xlim(-0.05,len(self._killList[:,2])+1)
+        self._sp5.legend()
+
+        self.twin = self._sp5.twiny()
+        self.twin.set_xlim(len(self.goodMatches), len(self.goodMatches)-len(self._killList[:,2])-1)
+        self.twin.set_xlabel('Number Match Stars')
+        self.twin.plot([12,12], [self.twin.get_ylim()[0],self.twin.get_ylim()[1]], 'r:', lw=3)
+
+        self._sp6.plot(np.arange(len(self._killList[:,2])), np.abs(self._killList[:,2]), 'b-o', lw=2, label = 'RA')
+        self._sp6.plot(np.arange(len(self._killList[:,2])), np.abs(self._killList[:,3]), 'r-o', lw=2, label = 'Dec')
+        self._sp6.plot([len(self._lastKilled), len(self._lastKilled)], [0.0,np.nanmax(np.abs(self._killList[:,2]))], 'k--')
+        self._sp6.plot([-0.05,len(self._killList[:,2])+1],[3.0,3.0],'r:',lw=3)
+        self._sp6.set_xlim(-0.05,len(self._killList[:,2])+1)
+        self._sp6.legend()
+
 
         self._sp4.set_xlabel('Y')
         self._sp3.set_xlabel('X')
         self._sp3.set_ylabel('delta Dec (")')
         self._sp1.set_ylabel('delta RA (")')
+
+        self._sp5.set_ylabel('Killed Star Residual (")')
+        self._sp6.set_ylabel('Max delta/Sample deviation')
+        self._sp6.set_xlabel('Kill Number')
 
         w = np.where(self.goodMatches)
         self.std_ra = np.std(self.dra[w])
@@ -397,6 +512,8 @@ class matrixWCSSolver(object):
         self.std_ra = np.std(self.dra[w])
         self.std_dec = np.std(self.ddec[w])
 
+
+        self._orderToKill()
 
         self._resid4Panel()
 
@@ -593,8 +710,8 @@ if __name__ == "__main__":
         os.system('rm OV.sex default.conv def.param')
     if not path.isfile('OV.sex') or overwriteSexFiles:
         scamp.makeParFiles.writeSex('OV.sex',
-                                    minArea=4.,
-                                    threshold=5.,
+                                    minArea=6.,
+                                    threshold=3.3,
                                     zpt=26.2,
                                     aperture=8.,
                                     min_radius=2.0,
