@@ -682,7 +682,7 @@ if __name__ == "__main__":
                       type = float, dest = 'minBA', action = 'store',
                       help = 'Minimum B/A sextractor roundness shape parameter to call a star a star. Lower this a small amount if you have trouble finding stars. DEFAULT = %default')
     parser.add_option('--maxMagDiff', default = 0.5,
-                      type = float, dest = 'minBA', action = 'store',
+                      type = float, dest = 'maxMagDiff', action = 'store',
                       help = 'The maximum magnitude difference between MAG_APER and MAG_AUTO for a source to be considered suitable. DEFAULT = %default')
     parser.add_option('--windowSize', default = 13,
                       type = int, dest = 'window', action = 'store',
@@ -731,7 +731,7 @@ if __name__ == "__main__":
         scamp.makeParFiles.writeParam(numAps=1) #numAps is thenumber of apertures that you want to use. Here we use 1
 
     scamp.runSex('OV.sex', 'sex.fits' ,options={'CATALOG_NAME':'OV.cat'}, verbose=True)
-    catalog = trimCatalog(scamp.getCatalog('OV.cat',paramFile='def.param'), minBA = opt.minBA)
+    catalog = trimCatalog(scamp.getCatalog('OV.cat',paramFile='def.param'), minBA = opt.minBA, maxMagDiff = opt.maxMagDiff)
 
     """
     for i in range(len(catalog['XWIN_IMAGE'])):
