@@ -22,18 +22,19 @@ from matplotlib import gridspec
 #instructions
 
 
-def trimCatalog(cat, minBA=0.85):
+def trimCatalog(cat, minBA=0.85, maxMagDiff = 0.5):
 
     good=[]
     for i in range(len(cat['XWIN_IMAGE'])):
         try:
             ba = cat['BWIN_IMAGE'][i]/cat['AWIN_IMAGE'][i]
             m = cat['MAG_AUTO'][i]
+            ma = cat['MAG_APER'][i]
             flag = cat['FLAGS'][i]
         except:
             pass
         #if cat['FLAGS'][i]==0 and m>0 and m<26:
-        if m>0 and m<26 and flag == 0 and ba>minBA:
+        if m>0 and m<26 and flag == 0 and ba>minBA and abs(ma-m)<maxMagDiff:
             good.append(i)
     good = np.array(good)
 
@@ -44,6 +45,10 @@ def trimCatalog(cat, minBA=0.85):
     outcat = {}
     for i in cat:
         outcat[i] = cat[i][good]
+    #w = np.where((outcat['MAG_AUTO'] - outcat['MAG_APER'])<0.2)
+    #for i in range(len(outcat['XWIN_IMAGE'])):
+    #    print outcat['XWIN_IMAGE'][i],outcat['YWIN_IMAGE'][i],outcat['MAG_AUTO'][i]-outcat['MAG_APER'][i]
+
     return outcat
 
 
@@ -673,9 +678,12 @@ if __name__ == "__main__":
     from optparse import OptionParser
 
     parser = OptionParser()
-    parser.add_option('--minBA', default = 0.85,
+    parser.add_option('--minBA', default = 0.8,
                       type = float, dest = 'minBA', action = 'store',
                       help = 'Minimum B/A sextractor roundness shape parameter to call a star a star. Lower this a small amount if you have trouble finding stars. DEFAULT = %default')
+    parser.add_option('--maxMagDiff', default = 0.5,
+                      type = float, dest = 'minBA', action = 'store',
+                      help = 'The maximum magnitude difference between MAG_APER and MAG_AUTO for a source to be considered suitable. DEFAULT = %default')
     parser.add_option('--windowSize', default = 13,
                       type = int, dest = 'window', action = 'store',
                       help = 'Window size for plots. DEFAULT = %default')
@@ -711,12 +719,12 @@ if __name__ == "__main__":
     if not path.isfile('OV.sex') or overwriteSexFiles:
         scamp.makeParFiles.writeSex('OV.sex',
                                     minArea=4,
-                                    threshold=3,
+                                    threshold=3.5,
                                     zpt=26.2,
                                     aperture=8.,
                                     min_radius=2.0,
                                     catalogType='FITS_LDAC',
-                                    saturate=55000)
+                                    saturate=64000)
     if not path.isfile('default.conv') or overwriteSexFiles:
         scamp.makeParFiles.writeConv()
     if not path.isfile('def.param') or overwriteSexFiles:
@@ -743,7 +751,7 @@ if __name__ == "__main__":
     for i in range(len(catalog['XWIN_IMAGE'])):
         imSources.append([catalog['XWIN_IMAGE'][i],
                           catalog['YWIN_IMAGE'][i],
-                          catalog['MAG_AUTO'][i]+2.5*np.log10(header['EXPTIME']),
+                          catalog['MAG_APER'][i]+2.5*np.log10(header['EXPTIME']),
                           catalog['FLUX_AUTO'][i],
                           catalog['ERRX2WIN_IMAGE'][i]*0.12**2,
                           catalog['ERRY2WIN_IMAGE'][i]*0.12**2])
