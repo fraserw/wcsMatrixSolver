@@ -679,7 +679,7 @@ if __name__ == "__main__":
     parser.add_option('--windowSize', default = 13,
                       type = int, dest = 'window', action = 'store',
                       help = 'Window size for plots. DEFAULT = %default')
-    parser.add_option('--tsvPath', default = '/Users/fraserw/Documents/Queens Documents/4th Year Projects/Harkness-1617/MatchFiles/',
+    parser.add_option('--tsvPath', default = '.',
                       dest = 'tsvPath', type = 'str', action = 'store',
                       help ='Path to the Orcus PS1 tsv file. DEFAULT = %default')
     (opt,args) = parser.parse_args()
@@ -710,8 +710,8 @@ if __name__ == "__main__":
         os.system('rm OV.sex default.conv def.param')
     if not path.isfile('OV.sex') or overwriteSexFiles:
         scamp.makeParFiles.writeSex('OV.sex',
-                                    minArea=6.,
-                                    threshold=3.3,
+                                    minArea=4,
+                                    threshold=3,
                                     zpt=26.2,
                                     aperture=8.,
                                     min_radius=2.0,
@@ -755,17 +755,22 @@ if __name__ == "__main__":
     starColourRange = [0.0,1.0]
 
 
+    useOrcusPS = False
     #load up stellar colours and mjds.
-    with open('{}/Orcus_PS.tsv'.format(opt.tsvPath)) as han:
-        tsv = han.readlines()
+    if useOrcusPS:
+        with open('{}/Orcus_PS.tsv'.format(opt.tsvPath)) as han:
+            tsv = han.readlines()
+    else:
+        with open('{}/wesBoxSearch4_k.w.smith.tsv'.format(opt.tsvPath)) as han:
+            tsv = han.readlines()
 
     tsvStars = []
     for i in range(1,len(tsv)):
         s = tsv[i].split()
-        tsvStars.append([float(s[1]),
-                         float(s[2]),
-                         float(s[3]),
-                         float(s[5])])
+        tsvStars.append([float(s[1]), #ra
+                         float(s[2]), #dec
+                         float(s[3]), #g
+                         float(s[5])]) #r
     tsvStars = np.array(tsvStars)
     w = np.where((tsvStars[:,2]-tsvStars[:,3]>starColourRange[0])&(tsvStars[:,2]-tsvStars[:,3]<starColourRange[1]))
     tsvStars = tsvStars[w]
