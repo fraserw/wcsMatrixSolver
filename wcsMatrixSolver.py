@@ -66,12 +66,22 @@ class matrixWCSSolver(object):
                 self.b_dec.append(header['B_DEC_{}'.format(i)])
             self.b_ra = np.array(self.b_ra)
             self.b_dec = np.array(self.b_dec)
+        if 'B_DEC_L5' in header:
+            self.b_ra_low = []
+            self.b_dec_low = []
+            for i in range(6):
+                self.b_ra_low.append(header['B_RA_L{}'.format(i)])
+                self.b_dec_low.append(header['B_DEC_L{}'.format(i)])
+            self.b_ra_low = np.array(self.b_ra_low)
+            self.b_dec_low = np.array(self.b_dec_low)
+
 
         self.imageSources = imageSources
         self.refSources = refSources
         self._xo = xo
         self._yo = yo
         self.header = header
+        self.header.set('RADESYSa','FK5')
         self.imagedata = np.copy(imagedata)
 
         #scratch crap pixel value fix
@@ -83,12 +93,13 @@ class matrixWCSSolver(object):
         self._normer = interval.ManualInterval(self._z1,self._z2)
 
         self._wcs  = WCS.WCS(header)
-        self._refSourcePix = self._wcs.wcs_world2pix(self.refSources[:,:2],0)
+        if self.refSources is not None:
+            self._refSourcePix = self._wcs.wcs_world2pix(self.refSources[:,:2],0)
 
-        (a,b) = self.imagedata.shape
-        w = np.where((self._refSourcePix[:,0]>-100)&(self._refSourcePix[:,0]<b+100)&(self._refSourcePix[:,1]>-100)&(self._refSourcePix[:,1]<a+100))
-        self._refSourcePix = self._refSourcePix[w]
-        self.refSources = self.refSources[w]
+            (a,b) = self.imagedata.shape
+            w = np.where((self._refSourcePix[:,0]>-100)&(self._refSourcePix[:,0]<b+100)&(self._refSourcePix[:,1]>-100)&(self._refSourcePix[:,1]<a+100))
+            self._refSourcePix = self._refSourcePix[w]
+            self.refSources = self.refSources[w]
 
         self._initSourceSelection = None
         self._initRefSelection = None
@@ -97,15 +108,18 @@ class matrixWCSSolver(object):
         self.windowSize = windowSize
         self._lastKilled = []
 
+
     def initialMatch(self, maxDeltaMag = 1.5):
         fig = pyl.figure('Full Image', figsize = (self.windowSize, self.windowSize))
         sp = fig.add_subplot(111)
         implot = pyl.imshow(self._normer(self.imagedata))
         implot.set_cmap('hot')
+        #plot the catalog sources
         pyl.scatter(self._refSourcePix[:,0], self._refSourcePix[:,1], c = 'g', s = 15)
         #pyl.scatter(self.imageSources[:,0]-1, self.imageSources[:,1]-1,c='b',alpha = 0.5)
 
 
+        #plot the actual on image sources
         self.circles = []
         for i in range(len(self.imageSources)):
             circle=Circle(self.imageSources[i,:2]-np.ones(2),20,facecolor="none",edgecolor='b',linestyle='dashed',linewidth=2, alpha=0.75,zorder=10)
@@ -205,6 +219,8 @@ class matrixWCSSolver(object):
 
         self.dra = (self.RA - self.pra)*3600.0
         self.ddec = (self.DEC - self.pdec)*3600.0
+        self.dra_low = (self.RA - self.pra_low)*3600.0
+        self.ddec_low = (self.DEC - self.pdec_low)*3600.0
 
         self._sp1.scatter(self.X,self.dra, s = 40)
         self._sp3.scatter(self.X,self.ddec, s = 40)
@@ -242,8 +258,8 @@ class matrixWCSSolver(object):
 
 
         w = np.where(self.goodMatches)
-        self._sp1.set_title('{:.3f}"'.format(np.std(self.dra[w])))
-        self._sp2.set_title('{:.3f}"'.format(np.std(self.ddec[w])))
+        self._sp1.set_title('{:.3f}/{:.3f}"'.format(np.std(self.dra[w]),np.std(self.dra_low[w])))
+        self._sp2.set_title('{:.3f}/{:.3f}"'.format(np.std(self.ddec[w]),np.std(self.ddec_low[w])))
 
         pyl.connect('button_press_event', self._killResid)
         pyl.connect('key_press_event', self._zoomResid)
@@ -313,39 +329,74 @@ class matrixWCSSolver(object):
     def _whichToKill(self):
         #get original state
         w = np.where(self.goodMatches)
-        (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
-        std_ra = np.std(predRA[w] - self.RA[w])*3600.0
-        std_dec = np.std(predDEC[w] - self.DEC[w])*3600.0
-        delta = (std_ra**2 + std_dec**2)**0.5
+        (A, b_ra, b_ra_low, b_dec_low, b_dec, predRA, predDEC, predRA_low, predDEC_low, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+        if self.useLowOrder:
+            std_ra = np.std(predRA_low[w] - self.RA[w])*3600.0
+            std_dec = np.std(predDEC_low[w] - self.DEC[w])*3600.0
+            delta = (std_ra**2 + std_dec**2)**0.5
 
-        #now determine which is the best to eliminate
-        k_deltas = []
-        individual_deltas = []
-        for i in w[0]:
-            self.goodMatches[i] = 0
+            #now determine which is the best to eliminate
+            k_deltas = []
+            individual_deltas = []
+            for i in w[0]:
+                self.goodMatches[i] = 0
 
+                fake_w = np.where(self.goodMatches)
+                (A, b_ra, b_dec, b_ra_low, b_dec_low, predRA, predDEC, predRA_low, predDEC_low, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+                k_std_ra = np.std(predRA_low[fake_w] - self.RA[fake_w])*3600.0
+                k_std_dec = np.std(predDEC_low[fake_w] - self.DEC[fake_w])*3600.0
+
+                k_delta = (k_std_ra**2 + k_std_dec**2)**0.5
+                k_deltas.append([k_delta,
+                                 (np.max(np.abs(predRA_low[fake_w] - self.RA[fake_w]))*3600.0)/k_std_ra,
+                                 (np.max(np.abs(predDEC_low[fake_w] - self.DEC[fake_w]))*3600.0)/k_std_dec])
+
+                self.goodMatches[i] = 1
+
+            k_deltas = np.array(k_deltas)
+            argmin = np.argmin(k_deltas[:,0])
+            kill = w[0][argmin]
+
+            #got which one to kill, now determine how bad that point is after killing it
+            self.goodMatches[kill] = 0
             fake_w = np.where(self.goodMatches)
-            (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
-            k_std_ra = np.std(predRA[fake_w] - self.RA[fake_w])*3600.0
-            k_std_dec = np.std(predDEC[fake_w] - self.DEC[fake_w])*3600.0
+            (A, b_ra, b_dec, b_ra_low, b_dec_low, predRA, predDEC, predRA_low, predDEC_low, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+            idra = (predRA_low[kill] - self.RA[kill])*3600.0
+            iddec = (predDEC_low[kill] - self.DEC[kill])*3600.0
 
-            k_delta = (k_std_ra**2 + k_std_dec**2)**0.5
-            k_deltas.append([k_delta,
-                             (np.max(np.abs(predRA[fake_w] - self.RA[fake_w]))*3600.0)/k_std_ra,
-                             (np.max(np.abs(predDEC[fake_w] - self.DEC[fake_w]))*3600.0)/k_std_dec])
+        else:
+            std_ra = np.std(predRA[w] - self.RA[w])*3600.0
+            std_dec = np.std(predDEC[w] - self.DEC[w])*3600.0
+            delta = (std_ra**2 + std_dec**2)**0.5
 
-            self.goodMatches[i] = 1
+            #now determine which is the best to eliminate
+            k_deltas = []
+            individual_deltas = []
+            for i in w[0]:
+                self.goodMatches[i] = 0
 
-        k_deltas = np.array(k_deltas)
-        argmin = np.argmin(k_deltas[:,0])
-        kill = w[0][argmin]
+                fake_w = np.where(self.goodMatches)
+                (A, b_ra, b_dec, b_ra_low, b_dec_low, predRA, predDEC, predRA_low, predDEC_low, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+                k_std_ra = np.std(predRA[fake_w] - self.RA[fake_w])*3600.0
+                k_std_dec = np.std(predDEC[fake_w] - self.DEC[fake_w])*3600.0
 
-        #got which one to kill, now determine how bad that point is after killing it
-        self.goodMatches[kill] = 0
-        fake_w = np.where(self.goodMatches)
-        (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
-        idra = (predRA[kill] - self.RA[kill])*3600.0
-        iddec = (predDEC[kill] - self.DEC[kill])*3600.0
+                k_delta = (k_std_ra**2 + k_std_dec**2)**0.5
+                k_deltas.append([k_delta,
+                                 (np.max(np.abs(predRA[fake_w] - self.RA[fake_w]))*3600.0)/k_std_ra,
+                                 (np.max(np.abs(predDEC[fake_w] - self.DEC[fake_w]))*3600.0)/k_std_dec])
+
+                self.goodMatches[i] = 1
+
+            k_deltas = np.array(k_deltas)
+            argmin = np.argmin(k_deltas[:,0])
+            kill = w[0][argmin]
+
+            #got which one to kill, now determine how bad that point is after killing it
+            self.goodMatches[kill] = 0
+            fake_w = np.where(self.goodMatches)
+            (A, b_ra, b_dec, b_ra_low, b_dec_low, predRA, predDEC, predRA_low, predDEC_low, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+            idra = (predRA[kill] - self.RA[kill])*3600.0
+            iddec = (predDEC[kill] - self.DEC[kill])*3600.0
 
         return (kill, k_deltas[argmin][0], k_deltas[argmin][1], k_deltas[argmin][2], idra,iddec)
         #self._lastKilled.append(w[0][argmin])
@@ -363,7 +414,7 @@ class matrixWCSSolver(object):
 
         #get the max_delts for no kills
         fake_w = np.where(self.goodMatches)
-        (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+        (A, b_ra, b_dec, b_ra_low, b_dec_low, predRA, predDEC, predRA_low, predDEC_low, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
         k_std_ra = np.std(predRA[fake_w] - self.RA[fake_w])*3600.0
         k_std_dec = np.std(predDEC[fake_w] - self.DEC[fake_w])*3600.0
         killList = [[-1, -32768.0, np.max(np.abs(predRA[fake_w] - self.RA[fake_w]))*3600.0/k_std_ra, np.max(np.abs(predDEC[fake_w] - self.DEC[fake_w]))*3600.0/k_std_dec , np.nan, np.nan]]
@@ -378,15 +429,21 @@ class matrixWCSSolver(object):
 
 
     def _fullRedraw(self):
-        (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+        (A, b_ra, b_dec, b_ra_low, b_dec_low, predRA, predDEC, predRA_low, predDEC_low, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
 
 
         self.pra = np.copy(predRA)
         self.pdec = np.copy(predDEC)
+        self.pra_low = np.copy(predRA_low)
+        self.pdec_low = np.copy(predDEC_low)
         self.dra = (self.RA - self.pra)*3600.0
         self.ddec = (self.DEC - self.pdec)*3600.0
+        self.dra_low = (self.RA - self.pra_low)*3600.0
+        self.ddec_low = (self.DEC - self.pdec_low)*3600.0
         self.b_ra = b_ra[:]
         self.b_dec = b_dec[:]
+        self.b_ra_low = b_ra_low[:]
+        self.b_dec_low = b_dec_low[:]
 
         self.lnL_RA = lnL_RA
         self.lnL_DEC = lnL_DEC
@@ -444,8 +501,10 @@ class matrixWCSSolver(object):
         w = np.where(self.goodMatches)
         self.std_ra = np.std(self.dra[w])
         self.std_dec = np.std(self.ddec[w])
-        self._sp1.set_title('RA residual {:.3f}"'.format(np.std(self.dra[w])))
-        self._sp2.set_title('Dec residual {:.3f}"'.format(np.std(self.ddec[w])))
+        self.std_ra_low = np.std(self.dra_low[w])
+        self.std_dec_low = np.std(self.ddec_low[w])
+        self._sp1.set_title('RA residuals {:.3f}/{:.3f}"'.format(self.std_ra,self.std_ra_low))
+        self._sp2.set_title('Dec residuals {:.3f}/{:.3f}"'.format(self.std_dec,self.std_dec_low))
 
         self._fullZooms = [self._sp1.get_xlim(),self._sp1.get_ylim(), self._sp2.get_xlim(),self._sp2.get_ylim(), self._sp3.get_xlim(),self._sp3.get_ylim(), self._sp4.get_xlim(),self._sp4.get_ylim()]
         self._zoomed = False
@@ -482,7 +541,8 @@ class matrixWCSSolver(object):
 
 
 
-    def solveMatrix(self):
+    def solveMatrix(self, useLowOrder = False):
+        self.useLowOrder = useLowOrder
         if self.matches == []:
             print 'Must run _getStar first!'
             return
@@ -498,12 +558,16 @@ class matrixWCSSolver(object):
 
         self.goodMatches = np.ones(len(self.matches))
 
-        (A, b_ra, b_dec, predRA, predDEC, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
+        (A, b_ra, b_dec, b_ra_low, b_dec_low, predRA, predDEC, predRA_low, predDEC_low, lnL_RA, lnL_DEC, BICS) = self._solveMatrix()
 
         self.pra = np.copy(predRA)
         self.pdec = np.copy(predDEC)
+        self.pra_low = np.copy(predRA_low)
+        self.pdec_low = np.copy(predDEC_low)
         self.dra = (self.RA - self.pra)*3600.0
         self.ddec = (self.DEC - self.pdec)*3600.0
+        self.dra_low = (self.RA - self.pra_low)*3600.0
+        self.ddec_low = (self.DEC - self.pdec_low)*3600.0
         self.lnL_RA = lnL_RA
         self.lnL_DEC = lnL_DEC
         self.BIC_RA = BICS[0]
@@ -512,11 +576,14 @@ class matrixWCSSolver(object):
         self.BIC_DEC_low = BICS[3]
         self.b_ra = b_ra[:]
         self.b_dec = b_dec[:]
+        self.b_ra_low = b_ra_low[:]
+        self.b_dec_low = b_dec_low[:]
 
         w = np.where(self.goodMatches)
         self.std_ra = np.std(self.dra[w])
         self.std_dec = np.std(self.ddec[w])
-
+        self.std_ra_low = np.std(self.dra_low[w])
+        self.std_dec_low = np.std(self.ddec_low[w])
 
         self._orderToKill()
 
@@ -621,25 +688,27 @@ class matrixWCSSolver(object):
 
 
         #these seem in error
-        lnL_RA = np.sum( -3600**2*(RA[w]-predRA[w])**2/(2*self.dX2[w])) - np.sum(0.5*np.log((2*np.pi*self.dX2[w])))
-        lnL_DEC = np.sum( - 3600**2*(DEC[w] - predDEC[w])**2/(2*self.dY2[w]))  - np.sum(0.5*np.log((2*np.pi*self.dY2[w])))
+        lnL_RA = np.sum( -(3600.0*(RA[w]-predRA[w]))**2/(2*self.dX2[w]) )  - np.sum(0.5*np.log(2*np.pi*self.dX2[w]))
+        lnL_DEC = np.sum( - (3600.0*(DEC[w] - predDEC[w]))**2/(2*self.dY2[w]))  - np.sum(0.5*np.log(2*np.pi*self.dY2[w]) )
 
-        lnL_RA_low = np.sum( -3600**2*(RA[w]-predRA_low[w])**2/(2*self.dX2[w])) - np.sum(0.5*np.log((2*np.pi*self.dX2[w])))
-        lnL_DEC_low = np.sum( - 3600**2*(DEC[w] - predDEC_low[w])**2/(2*self.dY2[w]))  - np.sum(0.5*np.log((2*np.pi*self.dY2[w])))
+        lnL_RA_low = np.sum( -(3600.0*(RA[w]-predRA_low[w]))**2/(2*self.dX2[w]) ) - np.sum(0.5*np.log(2*np.pi*self.dX2[w]))
+        lnL_DEC_low = np.sum( - (3600.0*(DEC[w] - predDEC_low[w]))**2/(2*self.dY2[w]) )  - np.sum(0.5*np.log(2*np.pi*self.dY2[w]))
 
         BIC_RA = -2*lnL_RA + np.log(len(w[0]))*8
         BIC_RA_low = -2*lnL_RA_low + np.log(len(w[0]))*6
         BIC_DEC = -2*lnL_DEC + np.log(len(w[0]))*8
         BIC_DEC_low = -2*lnL_DEC_low + np.log(len(w[0]))*6
+        #print lnL_RA_low,lnL_RA,BIC_RA_low,BIC_RA
+        #print lnL_DEC_low,lnL_DEC,BIC_DEC_low,BIC_DEC
         #print lnL_RA,lnL_DEC
         #print lnL_RA_low,lnL_DEC_low
 
-        return (A, b_ra, b_dec, predRA, predDEC, (lnL_RA,lnL_RA_low), (lnL_DEC,lnL_DEC_low), (BIC_RA,BIC_DEC,BIC_RA_low,BIC_DEC_low))
+        return (A, b_ra, b_dec, b_ra_low, b_dec_low, predRA, predDEC, predRA_low, predDEC_low, (lnL_RA,lnL_RA_low), (lnL_DEC,lnL_DEC_low), (BIC_RA,BIC_DEC,BIC_RA_low,BIC_DEC_low))
 
 
-    def xy2sky(self,xy):
-        x = xy[:,0]
-        y = xy[:,1]
+    def xy2sky(self,xy,useLowOrder = False):
+        x = xy[:,0]-self._xo
+        y = xy[:,1]-self._yo
 
         x2 = x*x
         x3 = x2*x
@@ -647,18 +716,30 @@ class matrixWCSSolver(object):
         y3 = y2*y
         xy = x*y
 
-        A = np.ones((8, len(x2))).astype('float64')
-        A[1,:] = x
-        A[2,:] = y
-        A[3,:] = x2
-        A[4,:] = xy
-        A[5,:] = y2
-        A[6,:] = x3
-        A[7,:] = y3
+        if useLowOrder:
+            A = np.ones((6, len(x2))).astype('float64')
+            A[1,:] = x
+            A[2,:] = y
+            A[3,:] = x2
+            A[4,:] = xy
+            A[5,:] = y2
+        else:
+            A = np.ones((8, len(x2))).astype('float64')
+            A[1,:] = x
+            A[2,:] = y
+            A[3,:] = x2
+            A[4,:] = xy
+            A[5,:] = y2
+            A[6,:] = x3
+            A[7,:] = y3
         A=A.T
 
-        ra = np.dot(A,self.b_ra)
-        dec = np.dot(A,self.b_dec)
+        if useLowOrder:
+            ra = np.dot(A,self.b_ra_low)
+            dec = np.dot(A,self.b_dec_low)
+        else:
+            ra = np.dot(A,self.b_ra)
+            dec = np.dot(A,self.b_dec)
         coords = np.zeros((len(ra),2)).astype('float64')
         coords [:,0] = ra
         coords [:,1] = dec
@@ -666,6 +747,38 @@ class matrixWCSSolver(object):
 
 
 
+
+    def updateHeader(self):
+
+        self.header.set('XO',self._xo)
+        self.header.set('YO',self._yo)
+        for i in range(len(self.goodMatches)):
+            self.header.set('XS_{}'.format(i),self.X[i])
+            self.header.set('YS_{}'.format(i),self.Y[i])
+            self.header.set('dX2S_{}'.format(i),self.dX2[i])
+            self.header.set('dY2S_{}'.format(i),self.dY2[i])
+            self.header.set('RAS_{}'.format(i),self.RA[i])
+            self.header.set('DECS_{}'.format(i),self.DEC[i])
+            self.header.set('GS_{}'.format(i),int(self.goodMatches[i]))
+
+        #for i in range(len(self.X)):
+        for i in range(len(self.b_ra)):
+            self.header.set('B_RA_{}'.format(i),self.b_ra[i])
+            self.header.set('B_DEC_{}'.format(i),self.b_dec[i])
+        for i in range(len(self.b_ra_low)):
+            self.header.set('B_RA_L{}'.format(i),self.b_ra_low[i])
+            self.header.set('B_DEC_L{}'.format(i),self.b_dec_low[i])
+
+        self.header.set('STD_RA',self.std_ra)
+        self.header.set('STD_DEC',self.std_dec)
+        self.header.set('STD_RA_LOW',self.std_ra_low)
+        self.header.set('STD_DEC_LOW',self.std_dec_low)
+        self.header.set('NMATCH',len(np.where(self.goodMatches==1)[0]))
+
+    def saveFits(self, fn, clobber = True):
+        HDU = fits.PrimaryHDU(self.imagedata, self.header)
+        List = fits.HDUList([HDU])
+        List.writeto(fn, clobber = clobber)
 
 
 
@@ -692,16 +805,17 @@ if __name__ == "__main__":
                       help ='Path to the Orcus PS1 tsv file. DEFAULT = %default')
     (opt,args) = parser.parse_args()
 
+    import approx_pos
 
     if len(args)>0:
         imagefn = args[0]
     else:
-        imagefn = 'EFOSC_Image010_0111_corr.fits'
+        imagefn = 'EFOSC_Image024_0152_corr.fits'
 
     with fits.open(imagefn) as han:
         header = han[0].header
         imdata = han[0].data
-    header.set('RADESYSa','FK5')
+    header.set('RADECSYSa','FK5')
 
     #scratch crap pixel value fix
     mean = np.median(imdata[::3,::3])
@@ -711,6 +825,11 @@ if __name__ == "__main__":
     List = fits.HDUList([HDU])
     List.writeto('sex.fits',clobber = True)
 
+    (xo,yo) = 512.0,512.0
+    for i in range(len(approx_pos.OV_guesses)):
+        if imagefn == approx_pos.OV_guesses[i][0]:
+            xo = float(int(approx_pos.OV_guesses[i][1]))
+            yo = float(int(approx_pos.OV_guesses[i][2]))
 
     #run sextractor
     overwriteSexFiles = True
@@ -718,8 +837,8 @@ if __name__ == "__main__":
         os.system('rm OV.sex default.conv def.param')
     if not path.isfile('OV.sex') or overwriteSexFiles:
         scamp.makeParFiles.writeSex('OV.sex',
-                                    minArea=4,
-                                    threshold=3.5,
+                                    minArea=3,
+                                    threshold=3.,
                                     zpt=26.2,
                                     aperture=8.,
                                     min_radius=2.0,
@@ -730,25 +849,29 @@ if __name__ == "__main__":
     if not path.isfile('def.param') or overwriteSexFiles:
         scamp.makeParFiles.writeParam(numAps=1) #numAps is thenumber of apertures that you want to use. Here we use 1
 
-    scamp.runSex('OV.sex', 'sex.fits' ,options={'CATALOG_NAME':'OV.cat'}, verbose=True)
-    catalog = trimCatalog(scamp.getCatalog('OV.cat',paramFile='def.param'), minBA = opt.minBA, maxMagDiff = opt.maxMagDiff)
+    scamp.runSex('OV.sex', 'sex.fits' ,options={'CATALOG_NAME':imagefn.replace('.fits','.cat')}, verbose=True)
+    catalog = trimCatalog(scamp.getCatalog(imagefn.replace('.fits','.cat'),paramFile='def.param'), minBA = opt.minBA, maxMagDiff = opt.maxMagDiff)
 
-    """
-    for i in range(len(catalog['XWIN_IMAGE'])):
-        print catalog['XWIN_IMAGE'][i],catalog['YWIN_IMAGE'][i]
-        if abs(catalog['XWIN_IMAGE'][i]-63)<5 and abs(catalog['YWIN_IMAGE'][i] - 934)<5:
-            for k in catalog.keys():
-                print k, catalog[k][i]
-    sys.exit()
-
-    """
+    #for i in range(len(catalog['XWIN_IMAGE'])):
+    #    print catalog['XWIN_IMAGE'][i],catalog['YWIN_IMAGE'][i]
+    #    if abs(catalog['XWIN_IMAGE'][i]-63)<5 and abs(catalog['YWIN_IMAGE'][i] - 934)<5:
+    #        for k in catalog.keys():
+    #            print k, catalog[k][i]
+    #sys.exit()
 
 
-        #
 
+    dist = ((xo - catalog['XWIN_IMAGE'])**2 + (yo - catalog['YWIN_IMAGE'])**2)**0.5
+    args = np.argsort(dist)
+    Orcus_x,Orcus_y = catalog['XWIN_IMAGE'][args[0]],catalog['YWIN_IMAGE'][args[0]]
+    print '\n\n\n'
+    print 'Orcus found at {:.3f} {:.3f} in image {}'.format(Orcus_x,Orcus_y,imagefn)
+    print '\n\n\n'
 
     imSources = []
     for i in range(len(catalog['XWIN_IMAGE'])):
+        astromUncert = (catalog['ERRX2WIN_IMAGE'][i]*0.12**2+catalog['ERRY2WIN_IMAGE'][i]*0.12**2)**0.5
+        if astromUncert>0.03: continue
         imSources.append([catalog['XWIN_IMAGE'][i],
                           catalog['YWIN_IMAGE'][i],
                           catalog['MAG_APER'][i]+2.5*np.log10(header['EXPTIME']),
@@ -760,15 +883,19 @@ if __name__ == "__main__":
 
     #stellar g-r colour range for wcs matching
     #orcus g-r ~0.44
-    starColourRange = [0.0,1.0]
+    starColourRange = [-0.2,1.5]
 
 
     useOrcusPS = False
+    useNewestOV = True
     #load up stellar colours and mjds.
     if useOrcusPS:
         with open('{}/Orcus_PS.tsv'.format(opt.tsvPath)) as han:
             tsv = han.readlines()
-    else:
+    elif useNewestOV:
+        with open('{}/OV_PS_catStars_20170823.dat'.format(opt.tsvPath)) as han:
+            tsv = han.readlines()
+    else: #this one seems best!
         with open('{}/wesBoxSearch4_k.w.smith.tsv'.format(opt.tsvPath)) as han:
             tsv = han.readlines()
 
@@ -783,8 +910,7 @@ if __name__ == "__main__":
     w = np.where((tsvStars[:,2]-tsvStars[:,3]>starColourRange[0])&(tsvStars[:,2]-tsvStars[:,3]<starColourRange[1]))
     tsvStars = tsvStars[w]
 
-
-    ms_wcs = matrixWCSSolver(imdata, header, imSources, tsvStars, windowSize = opt.window)
+    ms_wcs = matrixWCSSolver(imdata, header, imSources, tsvStars, windowSize = opt.window, xo=xo, yo=yo)
     ms_wcs.initialMatch()
     #with open('test.pickle','w+') as han:
     #    pickle.dump(ms_wcs.matches,han)
@@ -793,18 +919,9 @@ if __name__ == "__main__":
     #    matches = pickle.load(han)
     #    ms_wcs.matches = matches[:]
 
-    ms_wcs.solveMatrix()
-
-    for i in range(len(ms_wcs.b_ra)):
-        header.update('B_RA_{}'.format(i),ms_wcs.b_ra[i])
-        header.update('B_DEC_{}'.format(i),ms_wcs.b_dec[i])
-
-    header.update('STD_RA',ms_wcs.std_ra)
-    header.update('STD_DEC',ms_wcs.std_dec)
-    header.update('NMATCH',len(np.where(ms_wcs.goodMatches==1)[0]))
-
-    HDU = fits.PrimaryHDU(imdata, header)
-    List = fits.HDUList([HDU])
-    List.writeto('{}_wcs.fits'.format(imagefn.replace('.fits','')), clobber = True)
-
-    #print ms_wcs.xy2sky(np.array([[336.81,  595.00]]))
+    ms_wcs.solveMatrix(useLowOrder = True)
+    ms_wcs.updateHeader()
+    (Orcus_ra,Orcus_dec) = ms_wcs.xy2sky(np.array([[Orcus_x,Orcus_y]]))[0]
+    ms_wcs.header.set('Orc_RA',Orcus_ra)
+    ms_wcs.header.set('Orc_DEC',Orcus_dec)
+    ms_wcs.saveFits('{}_wcs.fits'.format(imagefn.replace('.fits','')))
